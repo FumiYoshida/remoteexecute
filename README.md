@@ -1,6 +1,10 @@
 
 # RemoteExecute
 This Python utility allows for remote method execution over HTTP. It encompasses a range of functionalities such as object serialization and deserialization, and remote method invocation via HTTP POST requests.
+
+> **Warning**<br>
+> The argument exchange uses pickle, allowing the client to execute arbitrary code on the server side. Only use this with trusted clients and in secure network environments.
+
 <p align="center">
  <img src="https://img.shields.io/badge/python-v3.9+-blue.svg">
  <img src="https://img.shields.io/badge/contributions-welcome-orange.svg">
