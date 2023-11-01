@@ -32,9 +32,9 @@ class Calculator:
 ### 2. Create Server and Client Classes
 
 ```python
-from remoteexecute import create_server_and_client_classes
+from remoteexecute import create_server_client_classes
 
-ServerClass, ClientClass = create_server_and_client_classes(Calculator)
+ServerClass, ClientClass = create_server_client_classes(Calculator)
 ```
 
 ### 3. Start the Server
