@@ -269,8 +269,9 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     
+    is_dunder_func =  lambda func_name: func_name.startswith("__") and func_name.endswith("__")
     if is_server_func is None:
-        is_server_func = lambda func_name: func_name.startswith("__") and func_name.endswith("__")
+        is_server_func = lambda func_name: False
     
     class Server(original_class):
         @functools.wraps(original_class.__init__)
@@ -294,7 +295,8 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
             def execute():
                 execute_info = SerializedArgs.deserialize(self, request.get_data()) # flask.request
                 
-                if not is_server_func(execute_info['func'].__name__):
+                func_name = execute_info['func'].__name__
+                if is_server_func(func_name) or is_dunder_func(func_name):
                     # 無効な関数名を指定されたら
                     # 実行せずに返す
                     return "nice try!"
@@ -358,7 +360,9 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
                 attr_value = getattr(original_class, attr_name)
                 # オブジェクトのメソッドのみデコレート（dunderメソッドを除く）
                 if callable(attr_value):
-                    if is_server_func(attr_name):
+                    if is_dunder_func(attr_name):
+                        pass
+                    elif is_server_func(attr_name):
                         setattr(self, attr_name, server_only_func)
                     else:
                         decorated_method = remote_method_decorator(
