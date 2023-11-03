@@ -226,7 +226,8 @@ def remote_method_decorator(method, server_url):
     
     return wrapper
 
-def create_server_client_classes(original_class, host="localhost", port="5000", visible_from_outside=False):
+def create_server_client_classes(original_class, host="localhost", port="5000", 
+                                 visible_from_outside=False, is_server_func=None):
     """
     Create Server and Client classes based on the given class for remote method execution.
 
@@ -241,6 +242,10 @@ def create_server_client_classes(original_class, host="localhost", port="5000", 
     visible_from_outside : bool, optional
         Whether the Server Class is accessible from outside the PC where it is being run.
         Even if this is set to True, access is not possible unless port forwarding is done with an ssh connection.
+    is_server_func : callable, optional
+            A function that takes the name of a function as input
+            and returns a bool indicating whether it should be a server-side only function
+            (i.e., a function that cannot be executed by the client).
 
     Returns
     -------
@@ -264,6 +269,9 @@ def create_server_client_classes(original_class, host="localhost", port="5000", 
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     
+    if is_server_func is None:
+        is_server_func = lambda func_name: func_name.startswith("__") and func_name.endswith("__")
+    
     class Server(original_class):
         @functools.wraps(original_class.__init__)
         def __init__(self, *args, **kwargs):
@@ -285,6 +293,12 @@ def create_server_client_classes(original_class, host="localhost", port="5000", 
             @self._app.route(execute_url_suffix, methods=['POST'])
             def execute():
                 execute_info = SerializedArgs.deserialize(self, request.get_data()) # flask.request
+                
+                if not is_server_func(execute_info['func'].__name__):
+                    # 無効な関数名を指定されたら
+                    # 実行せずに返す
+                    return "nice try!"
+                
                 serialized_result = SerializedResult.call_and_serialize(**execute_info)
                 return serialized_result
             
@@ -336,15 +350,22 @@ def create_server_client_classes(original_class, host="localhost", port="5000", 
                     )
                     warnings.warn(warning_str)
             
+            def server_only_func(*args, **kwargs):
+                warnings.warn('server-only func')
+            
             # すべての関数について、実行する代わりにサーバーに実行をリクエストするよう変更
             for attr_name in dir(original_class):  # dirを使用してすべてのメンバを取得
                 attr_value = getattr(original_class, attr_name)
                 # オブジェクトのメソッドのみデコレート（dunderメソッドを除く）
-                if callable(attr_value) and not (attr_name.startswith("__") and attr_name.endswith("__")):
-                    decorated_method = remote_method_decorator(
-                        method=attr_value,
-                        server_url=server_url,
-                    )
-                    setattr(self, attr_name, types.MethodType(decorated_method, self))
+                if callable(attr_value):
+                    if is_server_func(attr_name):
+                        setattr(self, attr_name, server_only_func)
+                    else:
+                        decorated_method = remote_method_decorator(
+                            method=attr_value,
+                            server_url=server_url,
+                        )
+                        setattr(self, attr_name, types.MethodType(decorated_method, self))
+                    
                     
     return Server, Client
