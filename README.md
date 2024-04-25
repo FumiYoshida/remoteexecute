@@ -13,9 +13,13 @@ This Python utility allows for remote method execution over HTTP. It encompasses
  </a>
 </p>
 
-## Install Requirements
+## Last Stable Release
 ```bash
 pip install git+https://github.com/FumiYoshida/remoteexecute
+```
+## Last Release (Develop Branch)
+```bash
+pip install git+https://github.com/FumiYoshida/remoteexecute@develop
 ```
 
 ## Sample Code
