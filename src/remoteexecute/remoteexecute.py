@@ -1,4 +1,6 @@
 # 標準ライブラリ
+import os
+import datetime
 import base64
 import pickle
 import types
@@ -8,6 +10,7 @@ import warnings
 import logging
 import inspect
 import functools
+from pathlib import Path
 
 # PyPI
 import requests
@@ -75,6 +78,7 @@ class SerializedArgs:
             A base64 encoded string containing the serialized data.
         """
         request_data = {
+            'pid': os.getpid(), # 60ns程度
             'func_name': func.__name__,
             'args': args,
             'kwargs': kwargs,
@@ -100,24 +104,22 @@ class SerializedArgs:
             A dictionary containing the deserialized function and its arguments.
         """
         request_data = base64_to_obj(res)
-        func = getattr(parent, request_data['func_name'])
-        return {
-            'func': func, 
-            'args': request_data['args'], 
-            'kwargs': request_data['kwargs'],
-        }
+        request_data['func'] = getattr(parent, request_data.pop('func_name'))
+        return request_data
 
 class SerializedResult:
     """
     A class for serializing and deserializing the results of function execution.
     """
     @staticmethod
-    def call_and_serialize(func, args, kwargs):
+    def call_and_serialize(pid, func, args, kwargs):
         """
         Execute a function and serialize its result or exception if any.
 
         Parameters
         ----------
+        pid : int
+            The process id of the client.
         func : function
             The function to be executed.
         args : tuple
@@ -227,7 +229,8 @@ def remote_method_decorator(method, server_url):
     return wrapper
 
 def create_server_client_classes(original_class, host="localhost", port="5000", 
-                                 visible_from_outside=False, is_server_func=None):
+                                 visible_from_outside=False, is_server_func=None, 
+                                 log_execution_info=True, log_dir='./log/'):
     """
     Create Server and Client classes based on the given class for remote method execution.
 
@@ -293,7 +296,8 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
             # postを受け取って関数を実行するよう設定
             @self._app.route(execute_url_suffix, methods=['POST'])
             def execute():
-                execute_info = SerializedArgs.deserialize(self, request.get_data()) # flask.request
+                serialized_args = request.get_data()
+                execute_info = SerializedArgs.deserialize(self, serialized_args) # flask.request
                 
                 func_name = execute_info['func'].__name__
                 if is_server_func(func_name) or is_dunder_func(func_name):
@@ -302,6 +306,17 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
                     return "nice try!"
                 
                 serialized_result = SerializedResult.call_and_serialize(**execute_info)
+
+                if log_execution_info:
+                    # 実行情報を保存
+                    now = datetime.datetime.now()
+                    self._check_date_change(now)
+                    print({
+                        'time': str(now),
+                        'args': serialized_args,
+                        'result': serialized_result,
+                    }, file=self._log_file, flush=True)
+                
                 return serialized_result
             
             # __init__の引数の情報をリクエストされたら返すよう設定
@@ -311,9 +326,20 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
             
             # サーバーを起動
             self.start_server()
-            
+
+        def _check_date_change(self, now):
+            if now.date() != self._log_file_date:
+                # 実行中に日付が変わったら
+                # 保存先のファイルを変更する
+                self._log_file.close()
+                self._log_file = open(Path(log_dir) / f"{now.date()}.txt", mode='a', encoding='utf-8-sig')
+        
         def start_server(self):
             """サーバーを起動する"""
+            if log_execution_info:
+                self._log_file_date = datetime.date.today()
+                Path(log_dir).mkdir(exist_ok=True)
+                self._log_file = open(Path(log_dir) / f"{datetime.date.today()}.txt", mode='a', encoding='utf-8-sig')
             self._server = make_server(self._host, self._port, self._app)
             self._thread = threading.Thread(target=self._server.serve_forever)
             self._thread.start()
@@ -322,6 +348,8 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
             """サーバーを停止する　以降`start_server`を呼ぶまでrequestを受け付けなくなる"""
             self._server.shutdown()
             self._thread.join()
+            if log_execution_info:
+                self._log_file.close()
 
             
     class Client(original_class):
@@ -370,6 +398,23 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
                             server_url=server_url,
                         )
                         setattr(self, attr_name, types.MethodType(decorated_method, self))
-                    
-                    
+
     return Server, Client
+
+def read_log_file(path, reconstruct=True):
+    import pandas as pd # ここ以外で使わないので使う直前に読み込む
+
+    # ログファイルを読み込む
+    with open(path, encoding='utf-8-sig') as f:
+        log_df = pd.DataFrame(map(eval, f.readlines()))
+    
+    if reconstruct:
+        # オブジェクトを再構成するとき
+        args = pd.DataFrame(list(log_df['args'].map(base64_to_obj)))
+        results = pd.DataFrame(list(log_df['result'].map(base64_to_obj)))
+        results['result'] = results['result'].map(base64_to_obj, na_action='ignore')
+        results.fillna('', inplace=True)
+        reconstructed_log_df = pd.concat([log_df[['time']], args, results], axis=1)
+        return reconstructed_log_df
+    else:
+        return log_df
