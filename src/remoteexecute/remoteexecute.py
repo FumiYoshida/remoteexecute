@@ -230,7 +230,7 @@ def remote_method_decorator(method, server_url):
 
 def create_server_client_classes(original_class, host="localhost", port="5000", 
                                  visible_from_outside=False, is_server_func=None, 
-                                 log_execution_info=True, log_dir='./log/'):
+                                 log_execution_info=True, log_dir='./log/', log_exclude_funcs=None):
     """
     Create Server and Client classes based on the given class for remote method execution.
 
@@ -242,14 +242,20 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
         The host where the server will be run.
     port : str, optional
         The port where the server will be listening.
-    visible_from_outside : bool, optional
+    visible_from_outside : bool, default: False
         Whether the Server Class is accessible from outside the PC where it is being run.
         Even if this is set to True, access is not possible unless port forwarding is done with an ssh connection.
     is_server_func : callable, optional
-            A function that takes the name of a function as input
-            and returns a bool indicating whether it should be a server-side only function
-            (i.e., a function that cannot be executed by the client).
-
+        A function that takes the name of a function as input
+        and returns a bool indicating whether it should be a server-side only function
+        (i.e., a function that cannot be executed by the client).
+    log_execution_info : bool, default: True
+        Whether to record execution info such as called time, function name, serialized input, serialized output.
+    log_dir : str, optional
+        directory to save log file.
+    log_exclude_funcs: list of str, optional
+        list of function names to exclude from the record.
+        
     Returns
     -------
     tuple
@@ -275,6 +281,9 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
     is_dunder_func =  lambda func_name: func_name.startswith("__") and func_name.endswith("__")
     if is_server_func is None:
         is_server_func = lambda func_name: False
+
+    if log_exclude_funcs is None:
+        log_exclude_funcs = []
     
     class Server(original_class):
         @functools.wraps(original_class.__init__)
@@ -307,8 +316,8 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
                 
                 serialized_result = SerializedResult.call_and_serialize(**execute_info)
 
-                if log_execution_info:
-                    # 実行情報を保存
+                if log_execution_info and (func_name not in log_exclude_funcs):
+                    # 記録対象の関数のとき 実行情報を保存
                     now = datetime.datetime.now()
                     self._check_date_change(now)
                     print({
@@ -405,7 +414,7 @@ def read_log_file(path, reconstruct=True):
     import pandas as pd # ここ以外で使わないので使う直前に読み込む
 
     # ログファイルを読み込む
-    with open(path, encoding='utf-8-sig') as f:
+    with open(path, encoding='utf-8-sig', mode='r') as f:
         log_df = pd.DataFrame(map(eval, f.readlines()))
     
     if reconstruct:
