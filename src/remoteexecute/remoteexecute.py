@@ -14,6 +14,7 @@ from pathlib import Path
 
 # PyPI
 import requests
+import pandas as pd
 
 # PyPI - Flask関連
 from flask import Flask, request, jsonify
@@ -411,11 +412,11 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
     return Server, Client
 
 def read_log_file(path, reconstruct=True):
-    import pandas as pd # ここ以外で使わないので使う直前に読み込む
-
     # ログファイルを読み込む
     with open(path, encoding='utf-8-sig', mode='r') as f:
         log_df = pd.DataFrame(map(eval, f.readlines()))
+        log_df['time'] = pd.to_datetime(log_df['time'])
+        log_df = log_df.fillna('')
     
     if reconstruct:
         # オブジェクトを再構成するとき
@@ -427,3 +428,8 @@ def read_log_file(path, reconstruct=True):
         return reconstructed_log_df
     else:
         return log_df
+
+def read_log_dir(dir, reconstruct=True):
+    dir = Path(dir)
+    log_dfs = [read_log_file(path) for path in dir.glob('*.txt')]
+    return pd.concat(log_dfs).reset_index(drop=True)
