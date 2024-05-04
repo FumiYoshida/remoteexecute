@@ -418,7 +418,7 @@ def read_log_file(path, reconstruct=True):
         log_df['time'] = pd.to_datetime(log_df['time'])
         log_df = log_df.fillna('')
     
-    if reconstruct:
+    if reconstruct and len(log_df) > 0:
         # オブジェクトを再構成するとき
         args = pd.DataFrame(list(log_df['args'].map(base64_to_obj)))
         results = pd.DataFrame(list(log_df['result'].map(base64_to_obj)))
@@ -431,5 +431,10 @@ def read_log_file(path, reconstruct=True):
 
 def read_log_dir(dir, reconstruct=True):
     dir = Path(dir)
-    log_dfs = [read_log_file(path) for path in dir.glob('*.txt')]
+    log_dfs = []
+    for path in dir.glob('*.txt'):
+        df = read_log_file(path)
+        if len(df) > 0:
+            log_dfs.append(df)
+    
     return pd.concat(log_dfs).reset_index(drop=True)
