@@ -414,7 +414,7 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
 def read_log_file(path, reconstruct=True):
     # ログファイルを読み込む
     with open(path, encoding='utf-8-sig', mode='r') as f:
-        log_df = pd.DataFrame(map(eval, f.readlines()))
+        log_df = pd.DataFrame(map(eval, f.readlines()), columns=['time', 'args', 'result'])
         log_df['time'] = pd.to_datetime(log_df['time'])
         log_df = log_df.fillna('')
     
