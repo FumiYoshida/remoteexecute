@@ -20,6 +20,8 @@ import pandas as pd
 from flask import Flask, request, jsonify
 from werkzeug.serving import make_server
 
+DATA_TO_LOG_KEY = '_remoteexecute_data_to_log' # 関数の実行には使わないがログには保存するデータを入れる引数名
+
 def obj_to_base64(obj):
     """
     Serialize an object and convert it to a base64 encoded string.
@@ -104,8 +106,12 @@ class SerializedArgs:
         dict
             A dictionary containing the deserialized function and its arguments.
         """
+        # データを復元
         request_data = base64_to_obj(res)
+
+        # 関数名 -> 関数object に変換
         request_data['func'] = getattr(parent, request_data.pop('func_name'))
+        
         return request_data
 
 class SerializedResult:
@@ -187,7 +193,6 @@ class SerializedResult:
             for warning_msg in response_data['warnings']:
                 warnings.warn(warning_msg)
 
-        
         if 'error' in response_data and 'traceback' in response_data:
             # サーバからのエラーとトレースバックを取得
             error_message = response_data['error']
@@ -199,7 +204,7 @@ class SerializedResult:
             result = base64_to_obj(response_data['result'])
             return result
         
-def remote_method_decorator(method, server_url):
+def remote_method_decorator(method, server_url, instance, log_class_attrs):
     """
     Decorator to make a method execute remotely.
 
@@ -209,7 +214,13 @@ def remote_method_decorator(method, server_url):
         The method to be decorated.
     server_url : str
         The URL where the server is hosted.
-        
+    instance : object
+        The instance of the class where the method is defined. This instance 
+        is used to retrieve the attribute values specified in `log_class_attrs`.
+    log_class_attrs : list of str
+        A list of attribute names whose values should be logged and sent with 
+        the request. These attributes are retrieved from the provided instance.
+    
     Returns
     -------
     function
@@ -217,6 +228,11 @@ def remote_method_decorator(method, server_url):
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
+        # ログに追加すべきクライアント側の情報をまとめる
+        kwargs[DATA_TO_LOG_KEY] = {}
+        for attr_name in log_class_attrs:
+            kwargs[DATA_TO_LOG_KEY][attr_name] = getattr(instance, attr_name, None)
+        
         # 実行に必要な情報をstring型にまとめる
         request_data = SerializedArgs.serialize(method, args, kwargs)
 
@@ -231,7 +247,8 @@ def remote_method_decorator(method, server_url):
 
 def create_server_client_classes(original_class, host="localhost", port="5000", 
                                  visible_from_outside=False, is_server_func=None, 
-                                 log_execution_info=True, log_dir='./log/', log_exclude_funcs=None):
+                                 log_execution_info=True, log_dir='./log/', log_exclude_funcs=None,
+                                 log_class_attrs=None,):
     """
     Create Server and Client classes based on the given class for remote method execution.
 
@@ -285,6 +302,10 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
 
     if log_exclude_funcs is None:
         log_exclude_funcs = []
+
+    # 各種ログの追加設定
+    if log_class_attrs is None:
+        log_class_attrs = []
     
     class Server(original_class):
         @functools.wraps(original_class.__init__)
@@ -314,6 +335,11 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
                     # 無効な関数名を指定されたら
                     # 実行せずに返す
                     return "nice try!"
+
+                if DATA_TO_LOG_KEY in execute_info['kwargs']:
+                    data_to_log = execute_info['kwargs'].pop(DATA_TO_LOG_KEY)
+                else:
+                    data_to_log = {}
                 
                 serialized_result = SerializedResult.call_and_serialize(**execute_info)
 
@@ -406,6 +432,8 @@ def create_server_client_classes(original_class, host="localhost", port="5000",
                         decorated_method = remote_method_decorator(
                             method=attr_value,
                             server_url=server_url,
+                            instance=self,
+                            log_class_attrs=log_class_attrs,
                         )
                         setattr(self, attr_name, types.MethodType(decorated_method, self))
 
@@ -420,10 +448,24 @@ def read_log_file(path, reconstruct=True):
     
     if reconstruct and len(log_df) > 0:
         # オブジェクトを再構成するとき
-        args = pd.DataFrame(list(log_df['args'].map(base64_to_obj)))
+
+        # 引数と追加ログを再構成
+        args_objs = []
+        for serialized_args in log_df['args']:
+            args_obj = base64_to_obj(serialized_args)
+            if DATA_TO_LOG_KEY in args_obj['kwargs']:
+                args_obj['additional_log'] = args_obj['kwargs'].pop(DATA_TO_LOG_KEY)
+            else:
+                args_obj['additional_log'] = {}
+            args_objs.append(args_obj)
+        args = pd.DataFrame(args_objs)
+
+        # 戻り値を再構成
         results = pd.DataFrame(list(log_df['result'].map(base64_to_obj)))
         results['result'] = results['result'].map(base64_to_obj, na_action='ignore')
         results.fillna('', inplace=True)
+
+        # まとめてpandas.DataFrameにして返す
         reconstructed_log_df = pd.concat([log_df[['time']], args, results], axis=1)
         return reconstructed_log_df
     else:
