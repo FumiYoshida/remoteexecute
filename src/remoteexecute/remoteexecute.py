@@ -475,7 +475,7 @@ def read_log_dir(dir, reconstruct=True):
     dir = Path(dir)
     log_dfs = []
     for path in dir.glob('*.txt'):
-        df = read_log_file(path)
+        df = read_log_file(path, reconstruct=reconstruct)
         if len(df) > 0:
             log_dfs.append(df)
     
